@@ -1,0 +1,34 @@
+metadata_version: 1
+name: Reinforcement learning based adaptive PID controller design for control of linear/nonlinear
+  unstable processes
+description: Control of unstable process is challenging owing to its dynamic nature,
+  output multiplicities and stability issues. This research work focuses to develop
+  a generic data driven modified Proximal Policy Optimization (m-PPO) reinforcement
+  learning based adaptive PID controller (RL-PID) for the control of open loop unstable
+  processes. The RL agent acting as the supervisor explores and identifies optimal
+  gains for the PID controller to ensure desired servo and regulatory performance.
+  Adaptive modifications in terms of inclusion of action repeat, modified reward function
+  and early stopping criterion are incorporated to the m-PPO algorithm to handle the
+  unbounded output nature of unstable processes. Effect of m-PPO algorithm is proven
+  in terms of reward earned by the RL agent. Servo and regulatory performance of the
+  proposed RL-PID controller is compared with that of classical PID controller, Deep
+  Discriminant Policy Gradient based PID controller and Advantage Actor Critic based
+  PID controller on various linear, non linear, multivariable unstable systems including
+  unstable jacketed CSTR process and Unmanned Aerial Vehicle in simulation environment.
+  Validation of the proposed controller is also done in real time level control process
+  station, a laboratory level experimental test rig. It is observed that the proposed
+  RL-PID performs satisfactorily better than the other controllers in both qualitative
+  and quantitative metrics. The striking feature of this control scheme is that it
+  eliminates the need of process modeling and prerequisite knowledge on process dynamics
+  and controller tuning. The proposed controller is a data driven generic approach
+  that can be directly applied to any industrial process.
+tags:
+- reinforcement learning
+- PID controller
+- adaptive controller
+- unstable process
+- CSTR
+authors:
+- name: T Shuprajhaa
+- name: Shiva Kanth Sujit
+- name: K. Srinivasan
