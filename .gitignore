@@ -1,1 +1,10 @@
-/data/
+__pycache__/
+*.py[cod]
+.DS_Store
+data/logs/
+data/results/
+code/logs/
+code/results/
+*.mat
+*.zip
+.docker/
