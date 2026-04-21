@@ -3,3 +3,46 @@ set -ex
 
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
 bash scripts/run.sh "$@"
+#!/usr/bin/env bash
+set -ex
+
+# --- CONFIGURATION ---
+STEPS=100000
+RESULTS_FOLDER="matlab_results"
+mkdir -p "$RESULTS_FOLDER"
+
+# Define the models to be processed
+# Algorithm name followed by Reward Type
+declare -a ALGOS=(
+    "PPO m-PPO"
+    "DDPG m-PPO"
+    "SAC m-PPO"
+    "A2C m-PPO"
+)
+
+echo "🚀 Starting Automated BTP Pipeline..."
+
+for entry in "${ALGOS[@]}"; do
+    # Split the entry into variables
+    read -r ALGO REWARD <<< "$entry"
+    
+    echo "------------------------------------------------"
+    echo "Processing: $ALGO ($REWARD)"
+    echo "------------------------------------------------"
+
+    # 1. TRAIN
+    python code/cs1.py --algo "$ALGO" --reward_type "$REWARD" --total_timesteps "$STEPS" --mode train
+    
+    # 2. TEST
+    python code/cs1.py --algo "$ALGO" --reward_type "$REWARD" --mode test
+    
+    # 3. SAVE RESULTS
+    # Move and rename the mat file to the results folder
+    mv matlab_matrix.mat "$RESULTS_FOLDER/${ALGO}_${REWARD}_results.mat"
+done
+
+# 4. FINAL ANALYSIS
+echo "📊 Generating Final Comparison Metrics..."
+python code/calculate_metrics.py
+
+echo "✅ Pipeline Complete. Check the '$RESULTS_FOLDER' for data and 'Performance_Metrics_Table.txt' for the final table."
