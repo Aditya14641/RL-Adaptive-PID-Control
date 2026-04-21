@@ -351,8 +351,10 @@ class GymSystem(gym.Env):
         disturbance=disturbance,
         deterministic=deterministic,
         disturbance_value=disturbance_value,
+        reward_mode="m-PPO"
     ):
         super().__init__()
+        self.reward_mode = reward_mode
 
         self.uinit = uinit
         self.yinit = yinit
@@ -378,6 +380,17 @@ class GymSystem(gym.Env):
             low=-100.0, high=100.0, shape=(self.n_states,), dtype=np.float32
         )
 
+    def step(self, action, debug=False):
+        action = self.convert_action(action)
+        obs = self.system.step(*action)
+        
+        # --- UPDATE THIS LINE TO PASS THE MODE ---
+        reward = self.get_reward(obs, mode=self.reward_mode) 
+        # -----------------------------------------
+        
+        done = bool(self.system.k == self.system.kfinal - 1)
+        return self.convert_state(), reward, done, {}
+
     def convert_state(self):
         obs = self.system.get_state()
         obs = np.array(obs).astype(np.float32)
@@ -402,15 +415,43 @@ class GymSystem(gym.Env):
         obs = self.convert_state()
         return obs
 
-    def get_reward(self, obs):
-        # Calculate error and reward
-        e = obs[0] - obs[1]
-        scale = 0.01
-        e_squared = scale * np.abs(e) ** 2
-        e_squared = np.minimum(e_squared, 5.0)
-        tol = (2.0 - np.abs(e)) if np.abs(e) <= 0.01 else 0.0
-        reward = -e_squared + tol
-        return reward
+    def get_reward(self, obs, mode="m-PPO"):
+        e = obs[0] - obs[1] # Setpoint - Output
+        
+        if mode == "m-PPO":
+            # The Paper's Strategy: Clipped Squared Error + Bonus 
+            eta = 0.01  # Scaling factor 
+            xi = 5.0    # Clipping factor 
+            r_ise = -np.minimum(np.maximum(eta * (e**2), 0), xi)
+            
+            # Binary bonus (r_add) for high precision 
+            r_add = 2.0 if np.abs(e) < 0.01 else 0.0
+            reward = r_ise + r_add
+            return reward
+
+        elif mode == "Standard_MSE":
+            # Failure Case 1: Raw Squared Error (Common in DDPG) 
+            # Predicted: Gradients will explode as 'e' grows 
+            reward = -(e**2)
+            return reward
+
+        elif mode == "Standard_MAE":
+            # Failure Case 2: Linear Absolute Error (Common in A2C) 
+            # Predicted: High oscillations in the unstable region 
+            reward = -np.abs(e)
+            return reward
+
+        elif mode == "ITAE":
+            # Failure Case 3: Time-weighted Error
+            # Predicted: Extreme penalties late in the episode cause divergence.
+            reward = -(self.system.k * self.system.delt) * np.abs(e)
+            return reward
+
+        elif mode == "Sparse":
+            # Failure Case 4: Binary success/failure
+            # Predicted: Agent will never find the setpoint.
+            reward =  1.0 if np.abs(e) < 0.01 else -0.1
+            return reward
 
     def step(self, action, debug=False):
         # sat_act = np.sum(action[action > 0.96]) + np.sum(action[action < -0.96])
@@ -420,7 +461,7 @@ class GymSystem(gym.Env):
         if debug:
             print("Converted: ", action)
         obs = self.system.step(*action)
-        reward = self.get_reward(obs)
+        reward = self.get_reward(obs, mode=self.reward_mode)
         done = bool(self.system.k == self.system.kfinal - 1)
         info = {}
         obs = self.convert_state()
@@ -490,6 +531,7 @@ from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecCheckNan, VecNormalize
+from stable_baselines3.common.noise import NormalActionNoise
 
 from callbacks import EvalCallback, SaveBestModelCallback
 
@@ -501,6 +543,8 @@ parser.add_argument("--action_repeat", type=int, default=2)
 parser.add_argument("--vec_normalize", default="True")
 parser.add_argument("--early_stopping", default="True")
 parser.add_argument("--mode", default="train")
+parser.add_argument("--reward_type", default="m-PPO", 
+                    choices=["m-PPO", "Standard_MSE", "Standard_MAE", "ITAE", "Sparse"])
 args = parser.parse_args()
 
 env_model = args.model
@@ -540,7 +584,7 @@ save_callback = SaveBestModelCallback(
     check_freq=20000, log_dir=log_dir, verbose=1
 )
 
-eval_env = GymSystem(system=env_class)
+eval_env = GymSystem(system=env_class, reward_mode=args.reward_type)
 if early_stopping:
     eval_env = EarlyStopping(eval_env)
 if action_repeat:
@@ -549,7 +593,7 @@ save_image_callback = EvalCallback(
     eval_env=eval_env, eval_freq=50000, log_dir=None, name="Random"
 )
 
-eval_env2 = GymSystem(system=env_class, deterministic=True)
+eval_env2 = GymSystem(system=env_class, deterministic=True, reward_mode=args.reward_type)
 if early_stopping:
     eval_env2 = EarlyStopping(eval_env2)
 if action_repeat:
@@ -562,12 +606,17 @@ callback = CallbackList([save_callback, save_image_callback, save_image_callback
 print(callback.callbacks)
 
 
-env = GymSystem(system=env_class)
+env = GymSystem(system=env_class, reward_mode=args.reward_type)
 if early_stopping:
     env = EarlyStopping(env)
 if action_repeat:
     env = ActionRepeat(env, action_repeat_value)
-env = make_vec_env(lambda: env, n_envs=1, monitor_dir=log_dir)
+'env = make_vec_env(lambda: env, n_envs=1, monitor_dir=log_dir)'
+# Protect our training logs! Only write a monitor file if we are training.
+if args.mode == "train":
+    env = make_vec_env(lambda: env, n_envs=1, monitor_dir=log_dir)
+else:
+    env = make_vec_env(lambda: env, n_envs=1, monitor_dir=None)
 if vec_normalize:
     if os.path.exists(os.path.join(log_dir, "vec_normalize.pkl")):
         print("Found VecNormalize Stats. Using stats")
@@ -579,8 +628,25 @@ else:
     env.normalize_obs = lambda x: x
 env = VecCheckNan(env, raise_exception=True)
 
+'''algo_class = getattr(stable_baselines3, algo)
+model = algo_class("MlpPolicy", env, verbose=1, tensorboard_log=log_dir)'''
+
 algo_class = getattr(stable_baselines3, algo)
-model = algo_class("MlpPolicy", env, verbose=1, tensorboard_log=log_dir)
+
+if algo == "DDPG":
+    # DDPG requires manual action noise for exploration
+    n_actions = env.action_space.shape[-1]
+    action_noise = NormalActionNoise(mean=np.zeros(n_actions), sigma=0.1 * np.ones(n_actions))
+    
+    model = algo_class("MlpPolicy", env, action_noise=action_noise, verbose=1, tensorboard_log=log_dir, batch_size=256)
+
+elif algo == "SAC":
+    # SAC works best with specific batch sizes for continuous control
+    model = algo_class("MlpPolicy", env, verbose=1, tensorboard_log=log_dir, batch_size=256)
+
+else:
+    # PPO and A2C run perfectly with standard defaults
+    model = algo_class("MlpPolicy", env, verbose=1, tensorboard_log=log_dir)
 
 best_model_path = os.path.join(log_dir, "best_model.zip")
 if os.path.exists(best_model_path) or args.mode == "test":
@@ -599,7 +665,7 @@ save_path = os.path.join(*save_path)
 test_log_dir = os.path.join("..", "results", save_path, "test_files", "servo")
 os.makedirs(test_log_dir, exist_ok=True)
 
-test_env = GymSystem(system=env_class, disturbance=False, deterministic=True)
+test_env = GymSystem(system=env_class, disturbance=False, deterministic=True, reward_mode=args.reward_type)
 if action_repeat:
     test_env = ActionRepeat(test_env, action_repeat_value)
 evaluate(model, test_env, action_repeat_value, test_log_dir)
